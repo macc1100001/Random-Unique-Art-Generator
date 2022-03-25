@@ -1,6 +1,5 @@
 using ImageMagick;
-using System.Threading.Tasks;
-using RUAG_Random_Unique_Art_Generator_utils;
+using RUAG_Random_Unique_Art_Generator_.Utils;
 
 namespace RUAG_Random_Unique_Art_Generator_
 {
@@ -9,12 +8,15 @@ namespace RUAG_Random_Unique_Art_Generator_
         private string inputFolder, outputFolder, description, collectionName, baseImgUri;
         private int collSize, maxNfts, totalFiles;
         private List<Layer> layers;
-        private Random r = new Random();
+        private Random r;
         private int idxListBox;
+        private CancellationTokenSource tokenSource;
         public Form1()
         {
             InitializeComponent();
             MagickNET.Initialize();
+            r = new Random();
+            tokenSource = new CancellationTokenSource();
             layers = new List<Layer>();
             inputFolder = "";
             outputFolder = "";
@@ -22,43 +24,42 @@ namespace RUAG_Random_Unique_Art_Generator_
             cancelButton.Enabled = false;
             sizeNumericUpDown.Enabled = false;
             layersListBox.Enabled = false;
+            nameTextBox.Enabled = false;
+            descriptionTextBox.Enabled = false;
             toolStripStatusLabel1.Text = "Nothing to do.";
             toolStripProgressBar1.Enabled = false;
-            /*this.sep1 = "";
-            this.prefix = "";*/
             this.description = "";
             this.collectionName = "";
-            this.baseImgUri = "http";
-            //this.prefixTextBox.Text = this.prefix;
+            this.baseImgUri = "http://";
         }
 
         private void backgroundWorker1_DoWork(object sender, System.ComponentModel.DoWorkEventArgs e)
         {
             backgroundWorker1.ReportProgress(0, "Creating layers...");
-            int k = 0;
+            int k = 1;
             layers.Clear();
             var folders = Directory.GetDirectories(inputFolder);
             if (folders is not null)
             {
                 foreach (var folder in folders)
                 {
-                    Layer tmpLayer = new Layer(Path.GetFileName(folder));
-                    tmpLayer.Elements = new List<Element>();
                     uint i = 0;
                     var files = Directory.GetFiles(folder);
-                    var tempImageInfo = new MagickImageInfo(files[0]);
-                    tmpLayer.Width = tempImageInfo.Width;
-                    tmpLayer.Height = tempImageInfo.Height;
                     if (files is not null)
                     {
+                        List<Element> tmpElements = new List<Element>();
                         foreach (var file in files)
                         {
-                            tmpLayer.Elements.Add(new Element(i++, Path.GetFileNameWithoutExtension(file), file, r.Next(1, 101)));
+                            tmpElements.Add(new Element(i++, Path.GetFileNameWithoutExtension(file), file, r.Next(1, 101)));
                         }
-                        layers.Add(tmpLayer);
-                        totalFiles += files.Count();
-                        maxNfts *= files.Count();
-                        backgroundWorker1.ReportProgress((++k * 100) / folders.Count(), "Creating layers...");
+                        Layer tmpLayer = new Layer(Path.GetFileName(folder), tmpElements);
+                        var tempImageInfo = new MagickImageInfo(files[0]);
+                        tmpLayer.Width = tempImageInfo.Width;
+                        tmpLayer.Height = tempImageInfo.Height;
+                        this.layers.Add(tmpLayer);
+                        totalFiles += files.Length;
+                        maxNfts *= files.Length;
+                        backgroundWorker1.ReportProgress(((k++) * 100) / folders.Length, "Creating layers...");
                     }
                 }
             }
@@ -83,8 +84,10 @@ namespace RUAG_Random_Unique_Art_Generator_
                 toolStripStatusLabel1.Text = "Done.";
                 foreach (var layer in layers)
                 {
-                    layersListBox.Items.Add(layer.Name.Substring(2));
+                    layersListBox.Items.Add(layer.Name[2..]);
                 }
+                nameTextBox.Enabled = true;
+                descriptionTextBox.Enabled = true;
             }
             if (nameTextBox.Text.Trim() != "" && descriptionTextBox.Text.Trim() != "" && outputFolder != null && outputTextBox.Text.Trim() != "")
             {
@@ -97,7 +100,7 @@ namespace RUAG_Random_Unique_Art_Generator_
             layersListBox.SelectedIndex = 0;
             this.sizeNumericUpDown.Maximum = this.maxNfts;
             this.sizeNumericUpDown.Enabled = true;
-            this.layersListBox.Enabled = true;
+            layersListBox.Enabled = true;
             inputButton.Enabled = true;
             toolStripProgressBar1.Enabled = false;
             outputButton.Enabled = true;
@@ -105,92 +108,9 @@ namespace RUAG_Random_Unique_Art_Generator_
 
         private void backgroundWorker2_DoWork(object sender, System.ComponentModel.DoWorkEventArgs e)
         {
-            backgroundWorker2.ReportProgress(20, "Working...");
-            List<NFTMetaData> nftMeta = new List<NFTMetaData>();
-            List<List<int>>? sels = Utils.GenerateNFTCollection(this.collectionName, this.description, this.baseImgUri, this.collSize,
-                                                                ref this.layers, ref backgroundWorker2, ref e, out nftMeta);
-            if (sels == null) return;
-
-            List<List<byte[]>> imgsPerLayer = new List<List<byte[]>>();
-            foreach (var layer in layers)
-            {
-                List<byte[]> imgLayers = new List<byte[]>();
-                foreach (var element in layer.Elements)
-                {
-                    var ms = new MemoryStream();
-                    var img = Image.FromFile(element.Path);
-                    img.Save(ms, img.RawFormat);
-                    imgLayers.Add(ms.ToArray());
-                }
-                imgsPerLayer.Add(imgLayers);
-            }
-
-            /*for (int i = 0; i < sels.Count && !backgroundWorker2.CancellationPending; i++)
-            {
-                using (var images = new MagickImageCollection())
-                {
-                    for (int j = 0; j < sels[i].Count; j++)
-                    {
-                        //var img = new MagickImage( (this.layers[j].Elements[sels[i][j]].Path));
-                        var img = new MagickImage(imgsPerLayer[j][sels[i][j]]);
-                        images.Add(img);
-                        //images.Add(imgsPerLayer[j][sels[i][j]]);
-                    }
-                    using (var result = images.Mosaic())
-                    {
-                        result.Write(outputFolder + "\\" + this.collectionName + " #" + Convert.ToString(i + 1) + ".png");
-                    }
-                }
-                Utils.GenerateNFTMetaDataFile(outputFolder, nftMeta[i]);
-                //Utils.GenerateNFTMetadata(); generate single file with all the metadata
-                //backgroundWorker2.ReportProgress((i * 100) / (this.collSize), "Saving image " +
-                //                                this.collectionName + " " + Convert.ToString(i + 1) + ".png...");
-                if (backgroundWorker2.CancellationPending)
-                {
-                    e.Cancel = true;
-                    break;
-                }
-            }*/
-            CancellationTokenSource cts = new CancellationTokenSource();
-
-            // Use ParallelOptions instance to store the CancellationToken
-            ParallelOptions po = new ParallelOptions();
-            po.CancellationToken = cts.Token;
-            po.MaxDegreeOfParallelism = Environment.ProcessorCount/2;
-            try
-            {
-                Parallel.For(0, sels.Count, po, i =>
-               {
-                   using (var images = new MagickImageCollection())
-                   {
-                       for (int j = 0; j < sels[i].Count; j++)
-                       {
-                           //var img = new MagickImage((this.layers[j].Elements[sels[i][j]].Path));
-                           var img = new MagickImage(imgsPerLayer[j][sels[i][j]]);
-                           //images.Add(img);
-                           images.Add(img);
-                           //images.Add(imgsPerLayer[j][sels[i][j]]);
-                       }
-                       using (var result = images.Mosaic())
-                       {
-                           result.Write(outputFolder + "\\" + Convert.ToString(i + 1) + ".png");
-                       }
-                   }
-                   Utils.GenerateNFTMetaDataFile(outputFolder, nftMeta[i]);
-                   //Utils.GenerateNFTMetadata(); generate single file with all the metadata
-                   //backgroundWorker2.ReportProgress((i * 100) / (this.collSize), "Saving image " +
-                   //                                this.collectionName + " " + Convert.ToString(i + 1) + ".png...");
-
-                   if (backgroundWorker2.CancellationPending)
-                   {
-                       e.Cancel = true;
-                       cts.Cancel();
-                   }
-               });
-            }
-            catch (OperationCanceledException ex) { 
-                cts.Dispose();
-            }
+            backgroundWorker2.ReportProgress(0, "Working...");
+            NFTCollection coll = new NFTCollection(this.collectionName, this.description, this.baseImgUri, this.collSize, this.layers);
+            coll.GenerateCollection(this.outputFolder, this.backgroundWorker2, e, ref tokenSource);
         }
 
         private void backgroundWorker2_ProgressChanged(object sender, System.ComponentModel.ProgressChangedEventArgs e)
@@ -265,6 +185,8 @@ namespace RUAG_Random_Unique_Art_Generator_
                 inputButton.Enabled = false;
                 toolStripProgressBar1.Enabled = true;
                 outputButton.Enabled = false;
+                nameTextBox.Enabled = false;
+                descriptionTextBox.Enabled = false;
                 backgroundWorker1.RunWorkerAsync();
             }
         }
@@ -342,18 +264,17 @@ namespace RUAG_Random_Unique_Art_Generator_
                 flowLayoutPanel1.Controls.Clear();
             }
         }
-        private void trackBar_ValueChanged(object sender, EventArgs e)
+        private void trackBar_ValueChanged(object? sender, EventArgs e)
         {
-            TrackBar trackBar = (TrackBar)sender;
             try
             {
+                TrackBar trackBar = (TrackBar)sender;
                 layers[idxListBox].Elements.Find(x => x.Name + ".png" == trackBar.Name).Weight = trackBar.Value;
             }
             catch (Exception ex)
             {
                 flowLayoutPanel1.Controls.Clear();
             }
-            //MessageBox.Show("Nuevo valor de " + layers[idxListBox].Elements.Find(x => x.Name == trackBar.Name).Name + " a " + layers[idxListBox].Elements.Find(x => x.Name == trackBar.Name).Weight);
 
         }
 
@@ -362,7 +283,6 @@ namespace RUAG_Random_Unique_Art_Generator_
             this.collSize = (int)sizeNumericUpDown.Value;
             this.collectionName = nameTextBox.Text;
             this.description = descriptionTextBox.Text;
-            //this.prefix = prefixTextBox.Text;
             generateButton.Enabled = false;
             cancelButton.Enabled = true;
             inputButton.Enabled = false;
@@ -370,7 +290,6 @@ namespace RUAG_Random_Unique_Art_Generator_
             sizeNumericUpDown.Enabled = false;
             nameTextBox.Enabled = false;
             descriptionTextBox.Enabled = false;
-            //prefixTextBox.Enabled = false;
             layersListBox.Enabled = false;
             flowLayoutPanel1.Enabled = false;
             toolStripProgressBar1.Enabled = true;
@@ -379,6 +298,7 @@ namespace RUAG_Random_Unique_Art_Generator_
 
         private void cancelButton_Click(object sender, EventArgs e)
         {
+            tokenSource.Cancel();
             backgroundWorker2.CancelAsync();
         }
     }
